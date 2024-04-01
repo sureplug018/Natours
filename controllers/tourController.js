@@ -1,8 +1,73 @@
-const { match } = require('assert');
+const sharp = require('sharp');
+const multer = require('multer');
 const Tour = require('./../models/tourModel');
 const APIFeatures = require('../utilitiles/apiFeaturs');
 
 // Define tour-related controller functions within this file
+
+const multerStorage = multer.memoryStorage();
+
+const multerFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image')) {
+    cb(null, true);
+  } else {
+    cb(
+      res.status(400).json({
+        status: 'fail',
+        message: 'Not an image! please upload only images.',
+      }),
+      false,
+    );
+  }
+};
+
+const upload = multer({
+  storage: multerStorage,
+  fileFilter: multerFilter,
+});
+
+exports.resizeTourPhoto = async (req, res, next) => {
+  try {
+    if (!req.files || !req.files.imageCover || !req.files.images) return next();
+
+    // for imageCover
+    req.body.imageCover = `tour-${req.params.id}-${Date.now()}-cover.jpeg`;
+
+    await sharp(req.files.imageCover[0].buffer)
+      .resize(2000, 1330)
+      .toFormat('jpeg')
+      .jpeg({ quality: 90 })
+      .toFile(`public/img/tours/${req.body.imageCover}`);
+
+    // for images
+    req.body.images = [];
+
+    await Promise.all(
+      req.files.images.map(async (file, i) => {
+        const filename = `tour-${req.params.id}-${Date.now()}-${i + 1}.jpeg`;
+
+        await sharp(file.buffer)
+          .resize(2000, 1330)
+          .toFormat('jpeg')
+          .jpeg({ quality: 90 })
+          .toFile(`public/img/tours/${filename}`);
+
+        req.body.images.push(filename);
+      }),
+    );
+    next();
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message,
+    });
+  }
+};
+
+exports.uploadTourPhoto = upload.fields([
+  { name: 'imageCover', maxCount: 1 },
+  { name: 'images', maxCount: 3 },
+]);
 
 exports.aliasTopTours = (req, res, next) => {
   req.query.limit = '5';
@@ -49,7 +114,7 @@ exports.getMonthlyPlan = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
       message: err.message,
     });
   }
@@ -64,7 +129,7 @@ exports.getTourStats = async (req, res) => {
       {
         $group: {
           _id: { $toUpper: '$difficulty' },
-          numTourStats: {$sum: 1},
+          numTourStats: { $sum: 1 },
           avgrating: { $avg: '$ratingsAverage' },
           avgPrice: { $avg: '$price' },
           maxPrice: { $max: '$price' },
@@ -80,7 +145,7 @@ exports.getTourStats = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
       message: err.message,
     });
   }
@@ -104,7 +169,7 @@ exports.getAllTours = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
       message: err.message,
     });
   }
@@ -112,7 +177,7 @@ exports.getAllTours = async (req, res) => {
 
 exports.getTour = async (req, res) => {
   try {
-    const tour = await Tour.findById(req.params.id);
+    const tour = await Tour.findById(req.params.id).populate('reviews');
 
     res.status(200).json({
       status: 'success',
@@ -122,7 +187,7 @@ exports.getTour = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
       message: err.message,
     });
   }
@@ -138,8 +203,8 @@ exports.createTour = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(404).json({
-      status: 'failed',
+    res.status(400).json({
+      status: 'fail',
       message: err.message,
     });
   }
@@ -160,7 +225,7 @@ exports.updateTour = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
       message: err.message,
     });
   }
@@ -168,7 +233,7 @@ exports.updateTour = async (req, res) => {
 
 exports.deleteTour = async (req, res) => {
   try {
-    const tour = await Tour.findByIdAndDelete(req.params.id);
+   await Tour.findByIdAndDelete(req.params.id);
 
     res.status(204).json({
       status: 'success',
@@ -176,7 +241,85 @@ exports.deleteTour = async (req, res) => {
     });
   } catch (err) {
     res.status(404).json({
-      status: 'failed',
+      status: 'fail',
+      message: err.message,
+    });
+  }
+};
+
+exports.getToursWithin = async (req, res) => {
+  try {
+    const { distance, latlng, unit } = req.params;
+    const [lat, lng] = latlng.split(',');
+    const radius = unit === 'mi' ? distance / 3963.2 : distance / 6378.1;
+
+    if (!lat || !lng) {
+      res.status(400).json({
+        status: 'fail',
+        message: 'Please provide latitude and longitude in the format lat, lng',
+      });
+    }
+
+    const tours = await Tour.find({
+      startLocation: { $geoWithin: { $centerSphere: [[lng, lat], radius] } },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: tours.length,
+      data: {
+        data: tours,
+      },
+    });
+  } catch (err) {
+    res.status(404).json({
+      status: 'fail',
+      message: err.message,
+    });
+  }
+};
+
+exports.getDistances = async (req, res) => {
+  try {
+    const { latlng, unit } = req.params;
+    const [lat, lng] = latlng.split(',');
+    const multiplier = unit === 'mi' ? 0.000621371 : 0.001;
+
+    if (!lat || !lng) {
+      res.status(400).json({
+        status: 'fail',
+        message: 'Please provide latitude and longitude in the format lat, lng',
+      });
+    }
+
+    const distances = await Tour.aggregate([
+      {
+        $geoNear: {
+          near: {
+            type: 'Point',
+            coordinates: [lng * 1, lat * 1],
+          },
+          distanceField: 'distance',
+          distanceMultiplier: multiplier,
+        },
+      },
+      {
+        $project: {
+          distance: 1,
+          name: 1,
+        },
+      },
+    ]);
+    res.status(200).json({
+      status: 'success',
+      results: distances.length,
+      data: {
+        data: distances,
+      },
+    });
+  } catch (err) {
+    res.status(404).json({
+      status: 'fail',
       message: err.message,
     });
   }

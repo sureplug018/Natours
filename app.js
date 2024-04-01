@@ -1,20 +1,39 @@
 const express = require('express');
 const helmet = require('helmet');
+const path = require('path');
 const hpp = require('hpp');
+const ejs = require('ejs');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
-const app = express();
 const tourRoutes = require('./routes/tourRoutes');
+const cookieParser = require('cookie-parser');
 const userRoutes = require('./routes/userRoutes');
-
-// setting security http headers
-app.use(helmet());
+const reviewRoutes = require('./routes/reviewRoutes');
+const viewsRoutes = require('./routes/viewsRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
+ 
+const app = express();
+app.set('view engine', 'ejs');
 
 app.use(
   helmet.contentSecurityPolicy({
     directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'trusted-scripts.com'],
+      defaultSrc: ["'self'", 'https://js.stripe.com/'],
+      scriptSrc: [
+        "'self'",
+        "'nonce-randomnoncevaluehere'",
+        'https://cdnjs.cloudflare.com',
+        'https://unpkg.com',
+        'https://js.stripe.com/v3/',
+      ],
+      imgSrc: [
+        "'self'",
+        'https://unpkg.com',
+        'data:',
+        'https://a.basemaps.cartocdn.com',
+        'https://b.basemaps.cartocdn.com',
+        'https://c.basemaps.cartocdn.com',
+      ],
     },
   }),
 );
@@ -22,8 +41,9 @@ app.use(
 if (process.env.NODE_ENV === 'development') {
   console.log(process.env.NODE_ENV);
 }
+app.set('views', path.join(__dirname, 'views'));
 
-// limiting the amount of requests from an ID
+// limiting the amount of requests from an IP
 const limiter = rateLimit({
   max: 100,
   windowMs: 60 * 60 * 100,
@@ -32,8 +52,9 @@ const limiter = rateLimit({
 
 app.use('/api', limiter);
 
-// limiting the amount of data that is parsed i body-parser by adding size in kb
+// limiting the amount of data that is parsed in body-parser by adding size in kb
 app.use(express.json({ limit: '10kb' }));
+app.use(cookieParser());
 
 // DATA SANITIZATION
 app.use(mongoSanitize());
@@ -64,8 +85,11 @@ app.use(express.static('./public'));
 
 // routes
 
+app.use('/', viewsRoutes);
+app.use('/api/v1/reviews', reviewRoutes);
 app.use('/api/v1/tours', tourRoutes);
 app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/booking', bookingRoutes);
 
 // start server
 

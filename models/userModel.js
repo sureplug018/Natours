@@ -21,7 +21,15 @@ const userSchema = new mongoose.Schema({
       message: 'Invalid email address',
     },
   },
-  photo: String,
+  confirmationToken: String,
+  photo: {
+    type: String,
+    default: 'default.jpg',
+  },
+  confirmed: {
+    type: Boolean,
+    default: false,
+  },
   role: {
     type: String,
     enum: ['user', 'guide', 'lead-guide', 'admin'],
@@ -57,6 +65,7 @@ const userSchema = new mongoose.Schema({
     default: true,
     select: false,
   },
+  confirmationTokenExpires: Date,
 });
 
 //creating a timestamp for each time password is changed
@@ -74,6 +83,7 @@ userSchema.pre('save', async function (next) {
   this.password = await bcrypt.hash(this.password, 12);
 
   this.passwordConfirm = undefined;
+  next();
 });
 
 // comparing provided password with the one saved in database before logging user in
@@ -105,7 +115,7 @@ userSchema.methods.createPasswordResetToken = function () {
     .update(resetToken)
     .digest('hex');
 
-  console.log({ resetToken }, this.passwordResetToken);
+  // console.log({ resetToken }, this.passwordResetToken);
   this.passwordResetExpires = Date.now() + 10 * 60 * 1000;
   return resetToken;
 };

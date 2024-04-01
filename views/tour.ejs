@@ -1,0 +1,154 @@
+<%- include ('partials/head'); %>
+</head>
+
+<body>
+  <header><%- include('partials/header') %></header>
+
+  <section class="section-header">
+    <div class="header__hero">
+      <div class="header__hero-overlay">&nbsp;</div>
+      <img class="header__hero-img" src="/img/tours/<%= tour.imageCover %>" alt="<%= tour.name %> imgae">
+    </div>
+
+    <div class="heading-box">
+      <h1 class="heading-primary">
+        <span><%= tour.name %> tour</span>
+      </h1>
+      <div class="heading-box__group">
+        <div class="heading-box__detail">
+          <svg class="heading-box__icon">
+            <use xlink:href="/img/icons.svg#icon-clock"></use>
+          </svg>
+          <span class="heading-box__text"><%= tour.duration%> days</span>
+        </div>
+        <div class="heading-box__detail">
+          <svg class="heading-box__icon">
+            <use xlink:href="/img/icons.svg#icon-map-pin"></use>
+          </svg>
+          <span class="heading-box__text"><%= tour.startLocation.description %></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-description">
+    <div class="overview-box">
+      <div>
+        <div class="overview-box__group">
+          <h2 class="heading-secondary ma-bt-lg">Quick facts</h2>
+          <div class="overview-box__detail">
+            <svg class="overview-box__icon">
+              <use xlink:href="/img/icons.svg#icon-calendar"></use>
+            </svg>
+            <span class="overview-box__label">Next date</span>
+            <span class="overview-box__text"><%= tour.startDates[0].toLocaleString('en-us', {month: 'long' , year: 'numeric' }) %></span>
+          </div>
+          <div class="overview-box__detail">
+            <svg class="overview-box__icon">
+              <use xlink:href="/img/icons.svg#icon-trending-up"></use>
+            </svg>
+            <span class="overview-box__label">Difficulty</span>
+            <span class="overview-box__text"><%= tour.difficulty %></span>
+          </div>
+          <div class="overview-box__detail">
+            <svg class="overview-box__icon">
+              <use xlink:href="/img/icons.svg#icon-user"></use>
+            </svg>
+            <span class="overview-box__label">Participants</span>
+            <span class="overview-box__text"><%= tour.maxGroupSize %> people</span>
+          </div>
+          <div class="overview-box__detail">
+            <svg class="overview-box__icon">
+              <use xlink:href="/img/icons.svg#icon-star"></use>
+            </svg>
+            <span class="overview-box__label">Rating</span>
+            <span class="overview-box__text"><%= tour.ratingsAverage %> / 5</span>
+          </div>
+        </div>
+
+        <div class="overview-box__group">
+          <h2 class="heading-secondary ma-bt-lg">Your tour guides</h2>
+
+          <% tour.guides.forEach(function(guide){ %>
+          <div class="overview-box__detail">
+            <img src="/img/users/<%= guide.photo %>" alt="<%= guide.name %>" class="overview-box__img" />
+
+            <% if(guide.role === 'lead-guide'){ %>
+            <span class="overview-box__label">Lead guide</span>
+            <% } %>
+            <% if(guide.role === 'guide') {%>
+            <span class="overview-box__label">Tour guide</span>
+            <% } %>
+            <span class="overview-box__text"><%= guide.name %></span>
+          </div>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="description-box">
+      <h2 class="heading-secondary ma-bt-lg">About <%= tour.name %> tour</h2>
+      <% const p = tour.description.split('\n') %>
+      <% p.forEach(function(paragraph){ %>
+      <p class="description__text">
+        <%= p %>
+      </p>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="section-pictures">
+    <% tour.images.forEach(function(image, index) { %>
+    <div class="picture-box">
+      <img class="picture-box__img picture-box__img--<%= index + 1 %>" src="/img/tours/<%= image %>" alt="<%= tour.name %> Tour <%= index + 1 %>">
+    </div>
+    <% }) %>
+
+  </section>
+
+  <section class="section-map">
+    <div id="map" data-locations="<%= JSON.stringify(tour.locations) %>"></div>
+  </section>
+
+  <section class="section-reviews">
+    <div class="reviews">
+      <% tour.reviews.forEach(function(review) { %>
+      <div class="reviews__card">
+        <div class="reviews__avatar">
+          <img class="reviews__avatar-img" src="/img/users/<%= review.user.photo %>" alt="<%= review.user.name %>">
+          <h6 class="reviews__user"><%= review.user.name %></h6>
+        </div>
+        <p class="reviews__text"><%= review.review %></p>
+        <div class="reviews__rating">
+          <% [1, 2, 3, 4, 5].forEach(function(star){ %>
+          <svg class="reviews__star reviews__star--<%= review.rating >= star ? 'active' : 'inactive' %>">
+            <use xlink:href="/img/icons.svg#icon-star"></use>
+          </svg>
+          <% }) %>
+        </div>
+      </div>
+      <% }) %>
+
+    </div>
+  </section>
+
+  <section class="section-cta">
+    <div class="cta">
+      <div class="cta__img cta__img--logo">
+        <img src="/img/logo-white.png" alt="Natours logo">
+      </div>
+      <img class="cta__img cta__img--1" src="/img/tours/<%= tour.images[1] %>" alt="<%= tour.name %> image">
+      <img class="cta__img cta__img--2" src="/img/tours/<%= tour.images[2] %>" alt="<%= tour.name %> image">
+      <div class="cta__content">
+        <h2 class="heading-secondary">What are you waiting for?</h2>
+        <p class="cta__text"><%= tour.duration %> days. 1 adventure. Infinite memories. Make it yours today!</p>
+        <% if(user){ %>
+        <button id="book-btn" data-tour-id="<%= tour.id %>" <%= tour.bookings >= tour.maxGroupSize ? "disabled" : '' %> class="btn <%= tour.bookings >= tour.maxGroupSize ? "btn--grey" : "btn--green" %> span-all-rows">Book tour now!</button>
+        <% }else{ %>
+        <a href="/login" class="btn btn--green span-all-rows">Log in to book tour</a>
+        <% } %>
+      </div>
+    </div>
+  </section>
+
+  <%- include('partials/footer'); %>

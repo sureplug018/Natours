@@ -3,7 +3,7 @@ const { promisify } = require('util');
 const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const User = require('./../models/userModel');
-const sendEmail = require('./../utilitiles/email');
+const Email = require('./../utilitiles/email');
 
 // jwt token generator
 const signToken = (id) => {
@@ -12,74 +12,159 @@ const signToken = (id) => {
   });
 };
 
-exports.signup = async (req, res, next) => {
+exports.signup = async (req, res) => {
   try {
-    const name = req.body.name;
-    const email = req.body.email;
-    const password = req.body.password;
-    const passwordConfirm = req.body.passwordConfirm;
+    const { name, email, password, passwordConfirm } = req.body;
 
-    // Ensure that the required properties exist in req.body before accessing them
-    const sanitizedName = name ? validator.escape(name) : undefined;
-    const sanitizedEmail = email ? validator.escape(email) : undefined;
-    const role = req.body.role;
-    const sanitizedPassword = password ? validator.escape(password) : undefined;
-    const sanitizedPasswordConfirm = passwordConfirm
-      ? validator.escape(passwordConfirm)
-      : undefined;
+    // Check if user with the given email and unconfirmed status exists
+    const existingUser = await User.findOne({ email });
 
-    // Create a new user with the sanitized values
+    if (existingUser) {
+      // Check if the existing user is unconfirmed, then delete
+      if (existingUser.confirmed === false) {
+        await User.findByIdAndDelete(existingUser._id);
+      } else {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'User with this email already exists',
+        });
+      }
+    }
+
+    // Create a new user
     const newUser = await User.create({
       name,
       email,
-      role,
       password,
       passwordConfirm,
     });
 
+    // Set confirmationToken and confirmationTokenExpires after user creation
+    newUser.confirmationToken = crypto.randomBytes(32).toString('hex');
+    newUser.confirmationTokenExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Save the user with the updated confirmation fields
+    await newUser.save();
+
+    const url = `${req.protocol}://${req.get('host')}/confirmed-account/${
+      newUser.confirmationToken
+    }`;
+    await new Email(newUser, url).sendConfirmEmail();
+
     // generating token for signup
-    const token = signToken(newUser._id);
+    // const token = signToken(newUser._id);
 
-    const cookieOptions = {
-      expires: new Date(
-        Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000,
-      ),
-      secure: true,
-      httpOnly: true,
-    };
+    // const cookieOptions = {
+    //   expires: new Date(
+    //     Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000,
+    //   ),
+    //   secure: true,
+    //   httpOnly: true,
+    // };
 
-    if (process.env.NODE_ENV === 'production') {
-      cookieOptions.secure = true;
-    }
+    // if (process.env.NODE_ENV === 'production') {
+    //   cookieOptions.secure = true;
+    // }
 
-    res.cookie('jwt', token, cookieOptions);
+    // res.cookie('jwt', token, cookieOptions);
 
     res.status(201).json({
       status: 'success',
-      token: token,
+      // token: token,
       data: {
         user: newUser,
       },
     });
   } catch (err) {
-    res.status(404).json({
+    return res.status(404).json({
+      status: 'fail',
+      message: err.message.split(': ')[2],
+    });
+  }
+};
+exports.confirmEmailFE = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    // Find the user by the confirmation token
+    const user = await User.findOne({ confirmationToken: token });
+
+    // check if the token exists
+    if (!user || user.confirmationTokenExpires < Date.now()) {
+      return res.status(500).render('error', {
+        title: 'Error',
+        user,
+        message: 'Invalid or expired verification link! try signing up again',
+      });
+    }
+
+    // else Update the user's status to confirmed
+    user.confirmed = true;
+    user.confirmationToken = undefined;
+    user.confirmationTokenExpires = undefined;
+    await user.save();
+
+    // Send welcome email
+    const url = `${req.protocol}://${req.get('host')}/me`;
+    await new Email(user, url).sendWelcome();
+    next();
+  } catch (err) {
+    return res.status(500).json({
       status: 'fail',
       message: err.message,
     });
   }
 };
 
-exports.login = async (req, res, next) => {
+exports.confirmEmailBE = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // Find the user by the confirmation token
+    const user = await User.findOne({ confirmationToken: token });
+
+    // check if the token exists
+    if (!user || user.confirmationTokenExpires < Date.now()) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid or expired confirmation token.',
+      });
+    }
+
+    // else Update the user's status to confirmed
+    user.confirmed = true;
+    user.confirmationToken = undefined;
+    user.confirmationTokenExpires = undefined;
+    await user.save();
+
+    // Send welcome email
+    const url = `${req.protocol}://${req.get('host')}/me`;
+    await new Email(user, url).sendWelcome();
+
+    // Redirect or respond with a success message
+    res.status(200).json({
+      status: 'success',
+      message: 'Email confirmed successfully.',
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: 'fail',
+      message: err.message,
+    });
+  }
+};
+
+exports.login = async (req, res) => {
   try {
     // get the details entered
 
     const { email, password } = req.body;
 
     const sanitizedEmail = email ? validator.escape(email) : undefined;
-    const sanitizedPassword = password ? validator.escape(password) : undefined;
+    // const sanitizedPassword = password ? validator.escape(password) : undefined;
 
     // check if they entered anything
-    if (!sanitizedEmail || !sanitizedPassword) {
+    if (!sanitizedEmail || !password) {
       res.status(401).json({
         status: 'fail',
         message: 'Please provide email and password!',
@@ -93,10 +178,24 @@ exports.login = async (req, res, next) => {
     );
 
     // comparing the input data and the saved data
-    if (
-      !user ||
-      !(await user.correctPassword(sanitizedPassword, user.password))
-    ) {
+    if (!user) {
+      res.status(401).json({
+        status: 'fail',
+        message: 'incorrect password or email',
+      });
+      return;
+    }
+
+    if (user.confirmed === false) {
+      return res.status(403).json({
+        status: 'fail',
+        message:
+          'Go to your mail and click the confirmation link to confirm your email before login',
+      });
+    }
+
+    // comparing the input data and the saved data
+    if (!(await user.correctPassword(password, user.password))) {
       res.status(401).json({
         status: 'fail',
         message: 'incorrect password or email',
@@ -108,15 +207,16 @@ exports.login = async (req, res, next) => {
     const token = signToken(user._id);
 
     const cookieOptions = {
-      expires: new Date(
+      expiresIn: new Date(
         Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000,
       ),
-      secure: true,
-      httpOnly: true,
+      secure: false,
+      httpOnly: false,
     };
 
     if (process.env.NODE_ENV === 'production') {
       cookieOptions.secure = true;
+      cookieOptions.httpOnly = true;
     }
 
     res.cookie('jwt', token, cookieOptions);
@@ -139,28 +239,34 @@ exports.protect = async (req, res, next) => {
     let token;
 
     // step 1: get the jwt tken and check if its true
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith('Bearer')
-    ) {
-      token = req.headers.authorization.split(' ')[1];
+    // if (
+    //   req.headers.authorization &&
+    //   req.headers.authorization.startsWith('Bearer')
+    // ) {
+    //   token = req.headers.authorization.split(' ')[1];
+    if (req.cookies.jwt) {
+      token = req.cookies.jwt;
     }
 
-    if (!token) {
-      res.status(401).json({
-        status: 'fail',
-        message: 'you are not logged in, please login to get access',
-      });
-      return;
+    // if (!token) {
+    //   res.status(401).json({
+    //     status: 'fail',
+    //     message: 'you are not logged in, please login to get access',
+    //   });
+    //   return;
+    // }
+
+    if(!token) {
+      return res.redirect('/login'); // Redirect to the login page
     }
 
     // step 2: verification of token
     const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET);
 
     // step 3: check if user still exists
-    const freshUser = await User.findById(decoded.id);
+    const currentUser = await User.findById(decoded.id);
 
-    if (!freshUser) {
+    if (!currentUser) {
       res.status(401).json({
         status: 'fail',
         message: 'the user belonging to this token does no longer exists',
@@ -169,7 +275,7 @@ exports.protect = async (req, res, next) => {
     }
 
     // step 4: check if the user changed password after the token was issued
-    if (freshUser.changedPasswordAfter(decoded.iat)) {
+    if (currentUser.changedPasswordAfter(decoded.iat)) {
       res.status(401).json({
         status: 'fail',
         message: 'user recently changed password! please login again',
@@ -178,7 +284,8 @@ exports.protect = async (req, res, next) => {
     }
 
     // step 5: grant access to protected route
-    req.user = freshUser;
+    req.user = currentUser;
+    res.locals.user = currentUser;
     next();
   } catch (err) {
     res.status(401).json({
@@ -213,7 +320,7 @@ exports.forgortPassword = async (req, res, next) => {
     if (!user) {
       res.status(404).json({
         status: 'fail',
-        message: 'there is no user with email address',
+        message: 'There is no user with email address',
       });
       return;
     }
@@ -222,19 +329,14 @@ exports.forgortPassword = async (req, res, next) => {
     const resetToken = user.createPasswordResetToken();
     await user.save({ validateBeforeSave: false });
 
-    const resetUrl = `${req.protocol}://${req.get(
-      'host',
-    )}/api/v1/users/resetPassword/${resetToken}`;
-
-    const message = `Forgot your password? Submit a PATCH with your new password and passwordConfirm to: ${resetUrl}.\n if you didn't forget your password, please ignore this email`;
-
     // step 5: sending the email
     try {
-      await sendEmail({
-        email: user.email,
-        subject: 'your password reset token (valid for 10 mins)',
-        message: message,
-      });
+      const resetUrl = `${req.protocol}://${req.get(
+        'host',
+      )}/resetPassword/${resetToken}`;
+
+      await new Email(user, resetUrl).sendPasswordReset();
+
       res.status(200).json({
         status: 'success',
         message: 'Token sent to email!',
@@ -301,12 +403,13 @@ exports.resetPassword = async (req, res, next) => {
       expires: new Date(
         Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000,
       ),
-      secure: true,
-      httpOnly: true,
+      secure: false,
+      httpOnly: false,
     };
 
     if (process.env.NODE_ENV === 'production') {
       cookieOptions.secure = true;
+      cookieOptions.httpOnly = true;
     }
 
     res.cookie('jwt', token, cookieOptions);
@@ -315,6 +418,7 @@ exports.resetPassword = async (req, res, next) => {
       status: 'success',
       token: token,
     });
+    next();
   } catch (err) {
     res.status(400).json({
       status: 'fail',
@@ -323,61 +427,172 @@ exports.resetPassword = async (req, res, next) => {
   }
 };
 
-exports.updatePassword = async (req, res, next) => {
-  // step 1: get user from the collection
+exports.updatePassword = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('+password');
 
-    // step 2: check if posted password is correct
-
     const passwordCurrent = req.body.passwordCurrent;
+    // const sanitizedPasswordCurrent = passwordCurrent
+    //   ? validator.escape(passwordCurrent)
+    //   : undefined;
 
-    const sanitizedPasswordCurrent = passwordCurrent
-      ? validator.escape(passwordCurrent)
-      : undefined;
-    if (
-      !(await user.correctPassword(sanitizedPasswordCurrent, user.password))
-    ) {
+    // The rest of your code for password validation...
+
+    // comparing the input data and the saved data
+    if (!(await user.correctPassword(passwordCurrent, user.password))) {
       res.status(401).json({
         status: 'fail',
-        maessage: 'Your current password is wrong',
+        message: 'your current password is wrong.',
       });
       return;
+    }
+
+    // Check if the request body contains password and passwordConfirm
+    if (!req.body.password || !req.body.passwordConfirm) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Password and password confirmation are required',
+      });
+    }
+
+    if (req.body.password !== req.body.passwordConfirm) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'newpassword and passwod confirm does not match',
+      });
     }
 
     const password = req.body.password;
     const passwordConfirm = req.body.passwordConfirm;
 
-    const sanitizedPassword = password ? validator.escape(password) : undefined;
-    const sanitizedPasswordConfirm = passwordConfirm
-      ? validator.escape(passwordConfirm)
-      : undefined;
+    // const sanitizedPassword = validator.escape(password);
+    // const sanitizedPasswordConfirm = validator.escape(passwordConfirm);
 
-    // step 3: if it is correct, update password
-    user.password = sanitizedPassword;
-    user.passwordConfirm = sanitizedPasswordConfirm;
+    // Update user password and passwordConfirm
+    user.password = password;
+    user.passwordConfirm = passwordConfirm;
     await user.save();
 
-    // step 4: send JWT and login the user
+    // Generate a new JWT token
     const token = signToken(user._id);
 
+    // Set cookie options
     const cookieOptions = {
       expires: new Date(
         Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000,
       ),
-      secure: true,
-      httpOnly: true,
+      secure: false,
+      httpOnly: false,
     };
 
     if (process.env.NODE_ENV === 'production') {
       cookieOptions.secure = true;
+      cookieOptions.httpOnly = true;
     }
 
+    // Set JWT token in cookie and send response
     res.cookie('jwt', token, cookieOptions);
 
     res.status(200).json({
       status: 'success',
       token: token,
+    });
+  } catch (err) {
+    // Handle specific error types
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        status: 'fail',
+        message: 'Invalid token. Please log in again.',
+      });
+    } else {
+      return res.status(500).json({
+        status: 'error',
+        message: err.message,
+      });
+    }
+  }
+};
+
+exports.isLoggedIn = async (req, res, next) => {
+  try {
+    if (req.cookies.jwt) {
+      // step 2: verification of token
+      const decoded = await promisify(jwt.verify)(
+        req.cookies.jwt,
+        process.env.JWT_SECRET,
+      );
+
+      // step 3: check if user still exists
+      const currentUser = await User.findById(decoded.id);
+
+      if (!currentUser) {
+        return next();
+      }
+
+      // step 4: check if the user changed password after the token was issued
+      if (currentUser.changedPasswordAfter(decoded.iat)) {
+        return next();
+      }
+
+      // step 5: grant access to protected route
+      res.locals.user = currentUser;
+      return next();
+    }
+    next();
+  } catch (err) {
+    return next();
+  }
+};
+
+exports.logout = (req, res) => {
+  res.cookie('jwt', 'loggedOut', {
+    expires: new Date(Date.now() + 10 * 1000),
+    httpOnly: true,
+  });
+  res.status(200).json({
+    status: 'success',
+  });
+};
+
+// Function to update user data
+exports.updateUserData = async (req, res) => {
+  try {
+    // Step 1: Authentication - Verify JWT token
+    const decoded = await promisify(jwt.verify)(
+      req.cookies.jwt, // Assuming the JWT is stored in a cookie
+      process.env.JWT_SECRET,
+    );
+
+    // Step 2: Fetch the user from the database
+    const currentUser = await User.findById(decoded.id);
+
+    const { name, email } = req.body;
+
+    const sanitizedName = name ? validator.escape(name) : undefined;
+    const sanitizedEmail = email ? validator.escape(email) : undefined;
+
+    // Step 3: Update user data based on the request body
+    if (req.body.name) {
+      currentUser.name = sanitizedName;
+    }
+
+    if (req.body.email) {
+      currentUser.email = sanitizedEmail;
+    }
+
+    if (req.file) {
+      currentUser.photo = req.file.filename;
+    }
+
+    // Step 4: Save the updated user data
+    await currentUser.save();
+
+    // Step 5: Respond with success message and updated user data
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: currentUser,
+      },
     });
   } catch (err) {
     res.status(400).json({

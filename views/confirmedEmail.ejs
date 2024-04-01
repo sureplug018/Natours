@@ -1,0 +1,21 @@
+<%- include ('partials/head'); %>
+</head>
+
+<body>
+  <header><%- include('partials/header') %></header>
+
+  <main class="main">
+    <div class="error">
+      <div class="error__title">
+        <h2 class="error__emoji">✅</h2>
+        <!-- <h2 class="heading-secondary heading-secondary--success">you have successfully confirmed your email address</h2> -->
+      </div>
+      <div class="error__msg">
+        <p>
+          <%= message && message.split(',').join('\n') %>
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <%- include('partials/footer') %>
